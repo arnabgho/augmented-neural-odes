@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from math import pi
-from torchdiffeq import odeint, odeint_adjoint, odeint_skip_step
+from torchdiffeq import odeint, odeint_adjoint, odeint_adjoint_stochastic_end_v3, odeint_stochastic_end_v3
+
 
 
 MAX_NUM_STEPS = 1000  # Maximum number of steps for ODE solver
@@ -102,14 +103,16 @@ class ODEBlock(nn.Module):
         If True calculates gradient with adjoint method, otherwise
         backpropagates directly through operations of ODE solver.
     """
-    def __init__(self, device, odefunc, is_conv=False, tol=1e-3, adjoint=False):
+    def __init__(self, device, odefunc, is_conv=False, tol=1e-3, adjoint=False,num_skips = 10,skip_proportion=0.05):
         super(ODEBlock, self).__init__()
         self.adjoint = adjoint
         self.device = device
         self.is_conv = is_conv
         self.odefunc = odefunc
         self.tol = tol
-
+        self.test_mode = False
+        self.num_skips = num_skips
+        self.skip_proportion = skip_proportion
     def forward(self, x, eval_times=None):
         """Solves ODE starting from x.
 
@@ -149,18 +152,26 @@ class ODEBlock(nn.Module):
             x_aug = x
 
         if self.adjoint:
-            out = odeint_adjoint(self.odefunc, x_aug, integration_time,
+            out = odeint_adjoint_stochastic_end_v3(self.odefunc, x_aug, integration_time,
                                  rtol=self.tol, atol=self.tol, method='dopri5',
                                  options={'max_num_steps': MAX_NUM_STEPS})
         else:
-            out = odeint(self.odefunc, x_aug, integration_time,
+            out =  odeint_stochastic_end_v3(self.odefunc, x_aug, integration_time,
+                                 rtol=self.tol, atol=self.tol, method='dopri5',
+                                 options={'max_num_steps': MAX_NUM_STEPS})
+        if self.test_mode:
+            out = odeint_adjoint(self.odefunc, x_aug, integration_time,
                          rtol=self.tol, atol=self.tol, method='dopri5',
-                         options={'max_num_steps': MAX_NUM_STEPS})
+                         options={'max_num_steps': MAX_NUM_STEPS}, num_skips=self.num_skips, skip_proportion= self.skip_proportion)
+
 
         if eval_times is None:
             return out[1]  # Return only final time
         else:
             return out
+
+    def set_test_mode(self):
+        self.test_mode = True
 
     def trajectory(self, x, timesteps):
         """Returns ODE trajectory.
